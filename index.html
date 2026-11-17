@@ -1,0 +1,977 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="color-scheme" content="light dark" />
+<link rel="icon" href="data:," />
+<title>Twitch投票オーバーレイ</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700;900&family=Archivo:wght@700;800;900&display=swap" rel="stylesheet">
+<style>
+  button, [role="button"], select, summary, input:not([type="checkbox"], [type="radio"]) { min-height: 2.25rem; }
+  * { box-sizing: border-box; }
+  :root{
+    --bg:#eaf7fb; --surface:#ffffff; --surface2:#bfeaf6; --ink:#163a5f; --ink2:#497285; --line:#9ad9ed;
+    --twitch:#4392ac; --twitch-dark:#1f4e79; --accent:#82d4ec; --teal:#2f7a9e; --amber:#e9a13b;
+    --brown:#8b5e3c; --cream:#fff3d6; --deep:#163a5f;
+    color-scheme: light dark;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{ --bg:#0f2f4a; --surface:#173f5e; --surface2:#1f5275; --ink:#f5fbff; --ink2:#b8dff0; --line:#2e6a8a; }
+  }
+  html,body{ margin:0; padding:0; }
+  body{ background:var(--bg); color:var(--ink); font-family:"Noto Sans JP", system-ui, sans-serif; -webkit-font-smoothing:antialiased; }
+  .wrap{ max-width:1180px; margin:0 auto; padding:20px 16px 40px; }
+  /* header */
+  .head{ display:flex; flex-wrap:wrap; align-items:flex-end; justify-content:space-between; gap:12px; margin-bottom:6px; }
+  .head h1{ font-size:26px; line-height:1.25; margin:0; font-weight:900; letter-spacing:.01em; }
+  .head h1 .tw{ color:var(--twitch); }
+  .head p{ margin:6px 0 0; color:var(--ink2); font-size:14px; line-height:1.7; max-width:640px; }
+  .status-pill{ display:inline-flex; align-items:center; gap:8px; background:var(--surface); border:1px solid var(--line); border-radius:999px; padding:8px 14px; font-size:13px; font-weight:700; white-space:nowrap; }
+  .dot{ width:10px; height:10px; border-radius:50%; background:#a8bdd8; flex:none; }
+  .dot.live{ background:#eb0400; box-shadow:0 0 0 4px rgba(235,4,0,.18); animation:pulse 1.2s infinite; }
+  .dot.ended{ background:var(--amber); }
+  @keyframes pulse{ 0%,100%{ transform:scale(1);} 50%{ transform:scale(1.25);} }
+  /* layout — パネル単体（左）＋操作パネル（右） */
+  .layout{ display:grid; grid-template-columns: 400px minmax(0,1fr); gap:20px; margin-top:16px; align-items:start; }
+  .layout > *{ min-width:0; }
+  @media (max-width: 900px){ .layout{ grid-template-columns:minmax(0,1fr); } }
+  /* panel standalone — 背景なし、パネルだけを表示 */
+  .panel-zone{ position:relative; }
+  @media (min-width: 901px){ .panel-zone{ position:sticky; top:16px; } }
+  .panel-label{ display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; gap:8px; flex-wrap:wrap; }
+  .panel-label strong{ font-size:13px; letter-spacing:.06em; }
+  .size-badge{ display:inline-flex; align-items:center; background:var(--surface); border:1px solid var(--line); border-radius:999px; padding:5px 11px; font-size:12px; font-weight:800; color:var(--ink2); font-variant-numeric:tabular-nums; white-space:nowrap; }
+  .size-badge b{ color:var(--teal); }
+  .overlay-wrap{ position:relative; width:380px; max-width:100%; margin:0 auto; }
+  /* overlay card — 単体パネル。幅380px固定、選択肢10個でも高さ1080px以内に収まるコンパクト設計 */
+  .overlay{
+    position:relative; width:100%; z-index:3;
+    display:flex; flex-direction:column;
+    background:#faf7ed; color:var(--deep); border-radius:16px; padding:13px 13px 11px;
+    box-shadow:0 14px 34px rgba(67,146,172,.38); border:2px solid var(--accent);
+  }
+  .ov-top{ display:flex; align-items:center; gap:8px; margin-bottom:6px; }
+  .ov-badge{ background:var(--twitch); color:#fff; font-size:11px; font-weight:900; letter-spacing:.08em; padding:3px 9px; border-radius:6px; }
+  .ov-badge.pred{ background:var(--twitch); }
+  .ov-timer{ margin-left:auto; font-family:"Archivo",sans-serif; font-weight:800; font-size:15px; font-variant-numeric:tabular-nums; color:var(--deep); }
+  .ov-timer.urgent{ color:#e83e6b; }
+  .ov-q{ font-size:17px; font-weight:900; line-height:1.4; margin:0 0 3px; word-break:break-word; }
+  .ov-sub{ font-size:11.5px; color:#5b7a90; margin:0 0 8px; }
+  .timebar{ height:5px; border-radius:99px; background:rgba(67,146,172,.20); overflow:hidden; margin-bottom:9px; flex:none; }
+  .timebar i{ display:block; height:100%; width:100%; background:linear-gradient(90deg,var(--twitch),var(--accent)); border-radius:99px; transition:width 1s linear; }
+  .opts{ display:flex; flex-direction:column; gap:5px; }
+  .opt{ position:relative; flex:none; }
+  .opt-row{ display:flex; align-items:baseline; gap:7px; position:relative; z-index:2; padding:5px 8px 0; }
+  .opt-num{ font-family:"Archivo",sans-serif; font-weight:900; font-size:11px; width:18px; height:18px; border-radius:5px; display:inline-flex; align-items:center; justify-content:center; color:#fff; flex:none; align-self:center; }
+  .opt-name{ font-weight:700; font-size:13.5px; flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .opt-pct{ font-family:"Archivo",sans-serif; font-weight:900; font-size:17px; font-variant-numeric:tabular-nums; }
+  .opt-meta{ position:relative; z-index:2; display:flex; gap:10px; padding:0 8px 5px 33px; font-size:10.5px; line-height:1.35; color:rgba(22,58,95,.66); font-variant-numeric:tabular-nums; }
+  .opt-track{ position:absolute; inset:0; border-radius:10px; background:#d2e9f0; overflow:hidden; }
+  .opt-fill{ position:absolute; inset:0 auto 0 0; width:0%; border-radius:10px; opacity:1; transition:width .85s cubic-bezier(.22,1.2,.36,1); will-change:width; }
+  /* 投票が入った瞬間のアニメーション（バーは幅のトランジションで伸びるだけ） */
+  .opt.bump{ animation:optBump .55s cubic-bezier(.22,1.4,.36,1); }
+  .opt.bump .opt-pct{ animation:pctPop .55s cubic-bezier(.22,1.6,.36,1); color:var(--deep); }
+  .opt.bump .opt-num{ animation:numPop .55s cubic-bezier(.22,1.6,.36,1); }
+  @keyframes optBump{ 0%{ transform:scale(1);} 35%{ transform:scale(1.025);} 100%{ transform:scale(1);} }
+  @keyframes pctPop{ 0%{ transform:scale(1);} 40%{ transform:scale(1.28);} 100%{ transform:scale(1);} }
+  @keyframes numPop{ 0%{ transform:scale(1);} 40%{ transform:scale(1.25) rotate(-6deg);} 100%{ transform:scale(1);} }
+  .vote-flash{ position:absolute; right:8px; top:-8px; z-index:5; font-family:"Archivo",sans-serif; font-weight:900; font-size:12px; color:#fff; background:var(--deep); border:1px solid rgba(255,255,255,.6); padding:2px 7px; border-radius:99px; pointer-events:none; animation:flashUp .8s ease-out forwards; }
+  @keyframes flashUp{ 0%{ opacity:0; transform:translateY(6px) scale(.8);} 20%{ opacity:1; transform:translateY(0) scale(1.08);} 100%{ opacity:0; transform:translateY(-14px) scale(1);} }
+  .opt.leading .opt-track{ outline:2px solid rgba(67,146,172,.55); outline-offset:0; }
+  .opt.winner{ animation:winpop .6s cubic-bezier(.22,1.4,.36,1), winnerGlow 1.8s ease-in-out .6s infinite; border-radius:10px; z-index:1; box-shadow:0 0 8px var(--opt-color, var(--twitch)), 0 0 16px var(--opt-color, var(--twitch)); }
+  .opt.winner .opt-track{ outline:2.5px solid var(--opt-color, var(--twitch)); box-shadow:0 0 0 1px var(--opt-color, var(--twitch)), 0 0 10px var(--opt-color, var(--twitch)), 0 0 18px var(--opt-color, var(--twitch)); }
+  .opt.winner .opt-fill{ filter:brightness(1.07) saturate(1.12); }
+  .opt.winner .win-badge{ box-shadow:0 0 6px rgba(255,217,122,.9), 0 0 12px rgba(255,217,122,.55); }
+  @keyframes winpop{ 0%{ transform:scale(1);} 40%{ transform:scale(1.03);} 100%{ transform:scale(1);} }
+  @keyframes winnerGlow{ 0%,100%{ box-shadow:0 0 6px var(--opt-color, var(--twitch)), 0 0 12px var(--opt-color, var(--twitch)); } 50%{ box-shadow:0 0 10px var(--opt-color, var(--twitch)), 0 0 20px var(--opt-color, var(--twitch)), 0 0 28px var(--opt-color, var(--twitch)); } }
+  .win-badge{ display:none; background:var(--cream); color:#7a5200; border:1px solid #ebcb8a; font-size:11px; font-weight:900; padding:3px 8px; border-radius:99px; flex:none; align-self:center; }
+  .opt.winner .win-badge{ display:inline-block; }
+  .opt.dim{ opacity:.45; }
+  .close-race{ display:none; margin-top:8px; background:#ef6f4c; color:#fff; font-weight:900; font-size:12.5px; text-align:center; padding:6px; border-radius:9px; animation:shake .5s infinite; }
+  .close-race.show{ display:block; }
+  @keyframes shake{ 0%,100%{ transform:translateX(0);} 25%{ transform:translateX(-1px);} 75%{ transform:translateX(1px);} }
+  @media (prefers-reduced-motion: reduce){ .close-race,.dot.live,.opt.winner,.opt.bump,.opt.bump .opt-pct,.opt.bump .opt-num,.vote-flash{ animation:none !important; } .opt-fill{ transition:none; } }
+  .ov-foot{ display:flex; justify-content:space-between; gap:8px; margin-top:9px; padding-top:8px; border-top:1px solid rgba(67,146,172,.28); font-size:11.5px; color:#5b7a90; }
+  .ov-foot b{ color:var(--deep); font-variant-numeric:tabular-nums; }
+  .result-banner{ display:none; margin-bottom:9px; background:linear-gradient(135deg,#ffe9a8,#ffd97a); color:#6d4c00; border:1px solid #e3b94e; border-radius:10px; padding:8px 10px; font-weight:900; font-size:14px; text-align:center; box-shadow:0 2px 10px rgba(227,185,78,.38); }
+  .result-banner.show{ display:block; }
+  .result-banner.waiting{ background:var(--cream); color:#7a5200; border:1px solid #ebcb8a; font-size:12.5px; letter-spacing:.02em; box-shadow:none; }
+  .confetti{ position:absolute; inset:0; pointer-events:none; z-index:4; overflow:hidden; border-radius:16px; }
+  .confetti i{ position:absolute; top:-14px; width:9px; height:14px; border-radius:2px; animation:fall linear forwards; }
+  @keyframes fall{ to{ transform:translateY(820px) rotate(620deg); opacity:.9; } }
+  /* control panel */
+  .panel{ display:flex; flex-direction:column; gap:14px; }
+  .card{ background:var(--surface); border:1px solid var(--line); border-radius:16px; padding:16px; }
+  .card h2{ font-size:14px; margin:0 0 12px; font-weight:900; display:flex; align-items:center; gap:8px; }
+  .card h2 .n{ background:var(--twitch); color:#fff; width:20px; height:20px; border-radius:6px; font-size:12px; display:inline-flex; align-items:center; justify-content:center; font-family:"Archivo",sans-serif; }
+  label.flabel{ display:block; font-size:12px; font-weight:700; color:var(--ink2); margin:10px 0 5px; }
+  label.flabel:first-of-type{ margin-top:0; }
+  input[type="text"], select{ width:100%; border:1px solid var(--line); background:var(--bg); color:var(--ink); border-radius:10px; padding:9px 11px; font-size:14px; font-family:inherit; }
+  input[type="text"]:focus, select:focus{ outline:2px solid var(--twitch); outline-offset:1px; }
+  .opt-edit{ display:flex; align-items:center; gap:8px; margin-bottom:6px; }
+  .opt-edit .swatch{ width:14px; height:14px; border-radius:5px; flex:none; }
+  .opt-edit .onum{ font-family:"Archivo",sans-serif; font-size:11px; font-weight:800; color:var(--ink2); width:16px; text-align:right; flex:none; font-variant-numeric:tabular-nums; }
+  .opt-edit input{ flex:1; min-width:0; }
+  #optEdits{ max-height:292px; overflow-y:auto; padding-right:4px; scrollbar-width:thin; }
+  #voteBtns{ max-height:340px; overflow-y:auto; padding-right:4px; scrollbar-width:thin; }
+  .seg{ display:grid; grid-template-columns:1fr 1fr; gap:6px; background:var(--surface2); padding:5px; border-radius:12px; }
+  .seg button{ border:0; background:transparent; color:var(--ink2); font-weight:800; font-size:13px; border-radius:8px; padding:9px 6px; cursor:pointer; font-family:inherit; }
+  .seg button.on{ background:var(--surface); color:var(--ink); box-shadow:0 2px 8px rgba(0,0,0,.12); }
+  .btnrow{ display:flex; gap:8px; flex-wrap:wrap; }
+  .btn{ border:1px solid var(--line); background:var(--surface); color:var(--ink); border-radius:11px; padding:10px 14px; font-size:14px; font-weight:800; cursor:pointer; font-family:inherit; flex:1; white-space:nowrap; }
+  .btn.primary{ background:var(--twitch); border-color:var(--twitch); color:#fff; }
+  .btn.primary:hover{ background:var(--twitch-dark); }
+  .btn.danger{ background:#ef476f; border-color:#ef476f; color:#fff; }
+  .btn.ghost{ flex:0 1 auto; }
+  .btn:disabled{ opacity:.45; cursor:not-allowed; }
+  .btn:active{ transform:translateY(1px); }
+  .vote-btns{ display:flex; flex-direction:column; gap:8px; }
+  .vote-line{ display:flex; align-items:center; gap:8px; }
+  .vote-line .vname{ flex:1; font-size:13.5px; font-weight:700; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; display:flex; align-items:center; gap:7px; }
+  .vote-line .vname i{ width:11px; height:11px; border-radius:4px; flex:none; }
+  .vote-line button{ border:1px solid var(--line); background:var(--bg); color:var(--ink); border-radius:9px; padding:7px 12px; font-weight:800; font-size:13px; cursor:pointer; font-family:inherit; font-variant-numeric:tabular-nums; }
+  .vote-line button:hover{ border-color:var(--twitch); color:var(--twitch); }
+  .hint{ font-size:12px; color:var(--ink2); line-height:1.7; margin:8px 0 0; }
+  .switch-row{ display:flex; align-items:center; justify-content:space-between; gap:10px; padding:9px 0 2px; }
+  .switch-row span{ font-size:13.5px; font-weight:700; }
+  .switch-row small{ display:block; font-weight:400; color:var(--ink2); font-size:11.5px; margin-top:2px; line-height:1.5; }
+  .tgl{ position:relative; width:52px; height:30px; flex:none; border:1px solid var(--line); background:var(--surface2); border-radius:99px; cursor:pointer; padding:0; }
+  .tgl::after{ content:""; position:absolute; top:3px; left:3px; width:22px; height:22px; border-radius:50%; background:#fff; box-shadow:0 1px 4px rgba(0,0,0,.25); transition:left .2s; }
+  .tgl[aria-checked="true"]{ background:var(--twitch); border-color:var(--twitch); }
+  .tgl[aria-checked="true"]::after{ left:25px; }
+  /* 結果確定エリア（締切とは別操作） */
+  .winner-area{ margin-top:14px; border:1.5px dashed var(--line); border-radius:12px; padding:12px; background:var(--bg); }
+  .winner-area.is-ready{ border-color:var(--amber); background:color-mix(in srgb, var(--amber) 7%, var(--surface)); }
+  .winner-area.is-confirmed{ border-style:solid; border-color:var(--teal); }
+  .winner-head{ display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap; }
+  .winner-head strong{ font-size:13.5px; font-weight:900; }
+  .winner-state{ font-size:11px; font-weight:900; letter-spacing:.04em; padding:3px 9px; border-radius:99px; background:var(--surface2); color:var(--ink2); border:1px solid var(--line); white-space:nowrap; }
+  .winner-state.ready{ background:#fff3d6; color:#7a5200; border-color:#f0d48a; }
+  .winner-state.confirmed{ background:var(--teal); color:#fff; border-color:var(--teal); }
+  @media (prefers-color-scheme: dark){ .winner-state.ready{ background:#3a2f10; color:#ffd97a; border-color:#6b5a1e; } }
+  .winner-btns{ display:flex; flex-direction:column; gap:7px; margin-top:10px; }
+  .winner-btn{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; width:100%; text-align:left; border:1px solid var(--line); background:var(--surface); color:var(--ink); border-radius:10px; padding:9px 11px; font-family:inherit; cursor:pointer; }
+  .winner-btn i{ width:11px; height:11px; border-radius:4px; flex:none; }
+  .winner-btn .wlabel{ flex:1; min-width:0; font-weight:800; font-size:13.5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .winner-btn .wmeta{ font-size:11.5px; color:var(--ink2); font-variant-numeric:tabular-nums; white-space:nowrap; }
+  .winner-btn .waction{ font-size:12px; font-weight:900; color:var(--twitch); white-space:nowrap; }
+  .winner-btn:hover:not(:disabled){ border-color:var(--twitch); }
+  .winner-btn:disabled{ opacity:.48; cursor:not-allowed; }
+  .winner-btn.selected{ border-color:var(--teal); outline:2px solid var(--teal); outline-offset:0; }
+  .winner-btn.selected .waction{ color:var(--teal); }
+  @media (max-width: 640px){
+    .overlay-wrap{ width:100%; }
+    .ov-q{ font-size:16px; }
+    .head h1{ font-size:22px; }
+  }
+  .howto{ margin-top:18px; background:var(--surface); border:1px solid var(--line); border-radius:16px; padding:18px; }
+  .howto h2{ margin:0 0 10px; font-size:15px; font-weight:900; }
+  .howto ol{ margin:0; padding-left:20px; line-height:1.9; font-size:13.5px; color:var(--ink2); }
+  .howto ol b{ color:var(--ink); }
+  .toast{ position:fixed; left:50%; bottom:22px; transform:translate(-50%, 80px); background:#0d2342; color:#fff; padding:11px 18px; border-radius:99px; font-size:13.5px; font-weight:700; box-shadow:0 10px 30px rgba(8,30,70,.4); transition:transform .35s cubic-bezier(.22,1,.36,1); z-index:50; max-width:calc(100% - 32px); text-align:center; }
+  .toast.show{ transform:translate(-50%,0); }
+  /* Twitch連携 & 配信用 */
+  .tw-status{ display:flex; align-items:flex-start; gap:9px; border:1px solid var(--line); background:var(--bg); border-radius:11px; padding:11px 12px; margin-top:12px; }
+  .tw-status .dot{ margin-top:4px; }
+  .tw-status strong{ font-size:13.5px; display:block; }
+  .tw-status small{ color:var(--ink2); line-height:1.6; display:block; margin-top:2px; }
+  .codebox{ display:flex; gap:8px; align-items:stretch; margin-top:6px; }
+  .codebox code{ flex:1; min-width:0; background:#0f2f4a; color:#d6f3ff; border-radius:9px; padding:9px 10px; font-size:11.5px; line-height:1.5; word-break:break-all; display:flex; align-items:center; }
+  .codebox button, .mini-btn{ flex:none; border:1px solid var(--line); background:var(--surface); color:var(--ink); border-radius:9px; padding:8px 11px; font-weight:800; font-size:12.5px; cursor:pointer; font-family:inherit; }
+  .steps{ margin:10px 0 0; padding-left:18px; font-size:12.5px; line-height:1.85; color:var(--ink2); }
+  .steps b{ color:var(--ink); }
+  .steps a{ color:var(--teal); font-weight:700; }
+  .stream-url{ width:100%; border:1px solid var(--line); background:var(--bg); color:var(--ink2); border-radius:10px; padding:9px 11px; font-size:12px; font-family:ui-monospace,monospace; word-break:break-all; }
+  /* 配信用モード： ?stream=1 のときパネルだけ・背景透明 */
+  body.stream-mode{ background:transparent !important; }
+  body.stream-mode .wrap{ max-width:none; margin:0; padding:8px; }
+  body.stream-mode .head, body.stream-mode .panel, body.stream-mode .howto, body.stream-mode .panel-label, body.stream-mode .panel-zone>.hint, body.stream-mode .toast{ display:none !important; }
+  body.stream-mode .layout{ display:block; margin:0; }
+  body.stream-mode .panel-zone{ position:static !important; }
+  body.stream-mode .overlay-wrap{ margin:0; }
+  /* 配信用モードで未連携のときだけ出す小さな連携バー（連携後は消える） */
+  .stream-connect{ display:none; }
+  body.stream-mode .stream-connect.show{ display:flex; flex-direction:column; gap:7px; width:380px; max-width:100%; margin-top:10px; background:#faf7ed; color:var(--deep); border:2px solid var(--accent); border-radius:12px; padding:10px 12px; box-shadow:0 10px 24px rgba(67,146,172,.35); }
+  .stream-connect strong{ font-size:13px; }
+  .stream-connect small{ font-size:11.5px; color:#5b7a90; line-height:1.55; }
+  .stream-connect .sc-row{ display:flex; gap:7px; }
+  .stream-connect input{ flex:1; min-width:0; border:1px solid var(--line); border-radius:9px; padding:8px 10px; font-size:13px; font-family:inherit; background:#fff; color:var(--deep); }
+  .stream-connect button{ flex:none; border:1px solid var(--twitch); background:var(--twitch); color:#fff; border-radius:9px; padding:8px 12px; font-weight:800; font-size:13px; cursor:pointer; font-family:inherit; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="head">
+    <div>
+      <h1><span class="tw">Twitch</span> 投票オーバーレイ ― パネル単体版</h1>
+      <p>背景なしの投票パネル単体です。幅380pxのコンパクト設計で、選択肢を10個すべて表示しても高さは1080pxに収まります。締め切ると、アンケートは最多得票の選択肢が自動で勝ちになり、賭博は「結果待ち」になってから実際の結果を手動で確定します。</p>
+    </div>
+    <div class="status-pill"><span class="dot" id="statusDot"></span><span id="statusText">待機中 ― まだ投票は始まっていません</span></div>
+  </div>
+
+  <div class="layout">
+    <div class="panel-zone">
+      <div class="panel-label">
+        <strong>投票パネル（単体）</strong>
+        <span class="size-badge" id="sizeInfo">幅 380px ・ 高さ — px</span>
+      </div>
+      <div class="overlay-wrap" id="overlayWrap">
+        <div class="confetti" id="confetti"></div>
+        <section class="overlay" id="overlay" aria-live="polite">
+          <div class="result-banner" id="resultBanner"></div>
+          <div class="ov-top">
+            <span class="ov-badge" id="modeBadge">アンケート</span>
+            <span class="ov-timer" id="ovTimer">--:--</span>
+          </div>
+          <p class="ov-q" id="ovQuestion">今日の背景、どっちの色にする？</p>
+          <p class="ov-sub" id="ovSub">チャットで番号を送って投票しよう</p>
+          <div class="timebar"><i id="timebarFill"></i></div>
+          <div class="opts" id="ovOpts"></div>
+          <div class="close-race" id="closeRace">⌛投票時間のこり 30秒！</div>
+          <div class="ov-foot">
+            <span>合計 <b id="totalVotes">0</b> 票</span>
+            <span id="footRight">投票受付前</span>
+          </div>
+        </section>
+      </div>
+      <div class="stream-connect" id="streamConnect">
+        <strong>Twitch未連携 ― 配信画面にはまだ自動反映されません</strong>
+        <small>OBSでこのソースを右クリック→「対話」を開き、ここで連携してください。許可後は自動でEventSubに接続し、このバーは消えます。</small>
+        <div class="sc-row">
+          <input type="text" id="streamClientId" placeholder="Client ID" autocomplete="off" spellcheck="false" aria-label="Client ID（配信用）">
+          <button type="button" id="streamConnectBtn">Twitchと連携</button>
+        </div>
+      </div>
+      <p class="hint">このパネルだけを OBS のブラウザソースに読み込ませて使う形です。置く位置は OBS 側で決めます。締切後、アンケートは最多得票が自動で勝ちになります。賭博は締切直後に「結果待ち」表示になり、勝ちバッジや紙吹雪は結果を確定するまで出ません。</p>
+    </div>
+
+    <div class="panel">
+      <div class="card">
+        <h2><span class="n">1</span>お題と選択肢</h2>
+        <div class="seg" role="group" aria-label="投票の種類">
+          <button type="button" id="modePoll" class="on">アンケート</button>
+          <button type="button" id="modePred">賭博</button>
+        </div>
+        <label class="flabel" for="qInput">お題</label>
+        <input type="text" id="qInput" value="今日の背景、どっちの色にする？" maxlength="60">
+        <label class="flabel">選択肢（最大10個・2つ以上入力すると有効になります）</label>
+        <div id="optEdits"></div>
+        <p class="hint" style="margin-top:4px;">空欄の選択肢はパネルに出ません。10個入れてもスクロールせず、すべて表示されます。</p>
+        <label class="flabel" for="durSel">投票時間</label>
+        <select id="durSel">
+          <option value="30">30秒</option>
+          <option value="60" selected>1分</option>
+          <option value="120">2分</option>
+          <option value="300">5分</option>
+        </select>
+      </div>
+
+      <div class="card">
+        <h2><span class="n">2</span>進行</h2>
+        <div class="btnrow">
+          <button type="button" class="btn primary" id="startBtn">▶ 投票スタート</button>
+          <button type="button" class="btn danger" id="endBtn" disabled>締め切る（ロック）</button>
+          <button type="button" class="btn ghost" id="resetBtn">リセット</button>
+        </div>
+        <p class="hint">「締め切る」は投票受付を止めます。アンケートはその時点で最多得票の選択肢が自動で勝ちに決まります。賭博はこの時点では結果未確定で、最多得票でも勝ちにはなりません。</p>
+
+        <div class="winner-area" id="winnerArea">
+          <div class="winner-head">
+            <strong id="winnerHeadTitle">結果の確定 ― 締切とは別の操作</strong>
+            <span class="winner-state" id="winnerState">未確定</span>
+          </div>
+          <p class="hint" id="winnerHint">アンケートは締切と同時に最多得票の選択肢が自動で勝ちになるので、ここで選ぶ必要はありません。賭博は締切後に、実際の結果になった選択肢をここで選んでください。選んだときだけ、勝ちバッジ・結果バナー・紙吹雪が出ます。</p>
+          <div class="winner-btns" id="winnerBtns"></div>
+          <div class="btnrow" style="margin-top:8px;">
+            <button type="button" class="btn ghost" id="clearWinnerBtn" style="display:none;">確定を取り消す（選び直す）</button>
+          </div>
+        </div>
+
+        <div class="switch-row">
+          <span>自動で票を流す<small>視聴者が投票している様子を再現します</small></span>
+          <button type="button" class="tgl" id="autoVote" role="switch" aria-checked="false" aria-label="自動で票を流す"></button>
+        </div>
+        <div class="switch-row">
+          <span>結果発表で音を鳴らす<small>結果が確定したときにファンファーレ風の音が出ます（賭博の締切時には鳴りません）</small></span>
+          <button type="button" class="tgl" id="soundOn" role="switch" aria-checked="true" aria-label="結果発表で音を鳴らす"></button>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2><span class="n">3</span>ダミー投票</h2>
+        <div class="vote-btns" id="voteBtns"></div>
+        <div class="btnrow" style="margin-top:10px;">
+          <button type="button" class="btn" id="burstBtn">🎲 ランダムに30票</button>
+        </div>
+        <p class="hint">投票中だけ票を入れられます。まずは「投票スタート」を押してみてください。</p>
+      </div>
+
+      <div class="card" id="twitchCard">
+        <h2><span class="n">4</span>Twitch連携</h2>
+        <p class="hint" style="margin-top:0;">連携すると、Twitchで開始したアンケート／賭博が自動でこのパネルに反映されます。手入力・ダミー投票は連携中は不要になります（確認用に残ります）。</p>
+        <label class="flabel" for="twitchClientId">Client ID（TwitchアプリのID）</label>
+        <input type="text" id="twitchClientId" placeholder="例：xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" autocomplete="off" spellcheck="false">
+        <div class="tw-status" id="twitchStatusBox">
+          <span class="dot" id="twitchDot"></span>
+          <div style="flex:1;min-width:0;"><strong id="twitchStatusTitle">未連携</strong><small id="twitchStatusDetail">Client IDを入れて「Twitchと連携」を押すと、Twitchの許可画面に進みます。許可は初回のみで、トークンの期限が切れたら再度許可します。</small></div>
+        </div>
+        <div class="btnrow" style="margin-top:12px;">
+          <button type="button" class="btn primary" id="twitchConnectBtn">Twitchと連携する</button>
+          <button type="button" class="btn ghost" id="twitchDisconnectBtn" style="display:none;">連携を切る</button>
+        </div>
+        <label class="flabel">アプリ登録時に設定するリダイレクトURL</label>
+        <div class="codebox"><code>このページの公開URLそのもの（末尾に ? や # を付けない形）を登録してください</code></div>
+        <ol class="steps">
+          <li><a href="https://dev.twitch.tv/console/apps" target="_blank" rel="noopener">dev.twitch.tv</a> でアプリを新規作成し、上のリダイレクトURLを登録</li>
+          <li>発行された <b>Client ID</b> を上に貼って「Twitchと連携する」を押す</li>
+          <li>Twitchの許可画面で許可 → このページに戻り、自動でEventSubに接続します</li>
+          <li>その後はTwitch側（ダッシュボード／チャットコマンド）で投票を開始すれば自動反映されます。アンケートは最大5択、賭博は2択がTwitch側の上限です</li>
+        </ol>
+        <p class="hint">権限（スコープ）は読み取り専用の <span style="font-family:monospace;font-size:11px;">channel:read:polls / channel:read:predictions</span> のみを要求します。トークンはこのタブの中だけで保持し、URLやサーバーには出しません。</p>
+      </div>
+
+      <div class="card" id="streamCard">
+        <h2><span class="n">5</span>配信用モード（OBS）</h2>
+        <p class="hint" style="margin-top:0;">配信用モードは <b>パネルだけ・背景透明</b> で表示します。操作パネルは映りません。下のURLをOBSのブラウザソースに貼って使ってください。</p>
+        <label class="flabel" for="streamUrlText">配信用URLの作り方（OBS用）</label>
+        <div class="stream-url" id="streamUrlText">このページの公開URL + ?stream=1</div>
+        <div class="btnrow" style="margin-top:10px;">
+          <button type="button" class="btn primary" id="openStreamBtn">配信用モードで開く（プレビュー）</button>
+        </div>
+        <ol class="steps">
+          <li>OBS：ソースの「＋」→「ブラウザ」→新規作成</li>
+          <li>URLに <b>このページの公開URLの末尾へ ?stream=1 を付けたもの</b> を貼り、<b>幅 400 / 高さ 760</b> 前後に設定（選択肢が多いときは高さを上げる）</li>
+          <li>OBS側でTwitch連携するときは、ブラウザソースを右クリック→「対話」を開きます。未連携のときはパネルの下に小さな連携バーが出るので、そこで Client ID を入れて許可してください（連携後はバーは消えます）。許可画面から戻っても配信用モードのまま自動接続します。トークンはOBS側のタブ内だけで保持され、URLには含めません</li>
+        </ol>
+        <div class="switch-row">
+          <span>この画面を配信用プレビューにする<small>パネルだけ表示に切り替えます。戻すときはURLの ?stream=1 を外してください</small></span>
+          <button type="button" class="tgl" id="streamPreviewTgl" role="switch" aria-checked="false" aria-label="配信用プレビュー"></button>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2><span class="n">6</span>プリセット</h2>
+        <label class="flabel" for="presetSel">お題のプリセット</label>
+        <select id="presetSel">
+          <option value="">― 選ぶとお題と選択肢が入れ替わります ―</option>
+          <option value="bg">イラスト：背景の色決め</option>
+          <option value="finish">賭博：今日中に塗り終わる？</option>
+          <option value="next">次に描くのはどっち？</option>
+          <option value="game">ゲーム：次の行動は？</option>
+          <option value="many">おやつ：選択肢10個の例</option>
+        </select>
+      </div>
+    </div>
+  </div>
+
+  <div class="howto">
+    <h2>使い方 ― 配信までの流れ</h2>
+    <ol>
+      <li><b>Twitch連携</b> ― 右の「Twitch連携」カードでアプリ登録 → Client IDを貼る → 許可する（初回のみ）</li>
+      <li><b>配信用URLを作る</b> ― このページの公開URLに ?stream=1 を付けて、OBSのブラウザソース（幅400・高さ760前後）に貼る。OBS側では「対話」を開き、未連携時に出る小さな連携バーからTwitch連携を許可する</li>
+      <li><b>配信で使う</b> ― Twitch側でアンケート／賭博を開始すると、配信用パネルに自動で反映されます。手動操作は未連携時のテスト用です</li>
+    </ol>
+  </div>
+</div>
+<div class="toast" id="toast" role="status"></div>
+
+<script>
+(function(){
+  // 選択肢1〜10の色：1番=赤から10番=紫まで、色相環を回るグラデーション（赤→橙→黄→黄緑→緑→エメラルド→水色→青→藍→紫）
+  // 色相はそのままに、彩度を少しだけ落として明度を少し上げたパステル寄りの色味（薄くなりすぎない範囲）
+  var COLORS = ['#e16161','#e6954a','#efb72c','#86c840','#3ab43a','#1ac189','#10b8da','#5196db','#7078e1','#a662d4'];
+  var MAX_OPTS = 10;
+  // 配信用モード判定（?stream=1 / ?overlay=1 / ?mode=stream）
+  var _qs = new URLSearchParams(location.search);
+  var IS_STREAM = _qs.get('stream')==='1' || _qs.get('overlay')==='1' || _qs.get('mode')==='stream';
+  if(IS_STREAM){ document.body.classList.add('stream-mode'); }
+  var twitch = { clientId: _qs.get('client_id')||'', accessToken:'', userId:'', userLogin:'', displayName:'', ws:null, sessionId:'', keepaliveTimer:null, connected:false, reconnectTimer:null };
+  function blankOpts(){ var a=[]; for(var i=0;i<MAX_OPTS;i++) a.push({ label:'', votes:0, points:0 }); return a; }
+  var state = {
+    mode: 'poll', // 'poll' | 'pred'
+    status: 'idle', // 'idle' | 'live' | 'ended'
+    options: blankOpts(),
+    duration: 60, remain: 60, timerId: null, autoId: null, winnerIdx: -1
+  };
+  state.options[0].label='夕焼けオレンジ';
+  state.options[1].label='夜空ネイビー';
+  var prevVotes = state.options.map(function(){ return 0; });
+
+  var $ = function(id){ return document.getElementById(id); };
+  var overlay=$('overlay'), ovOpts=$('ovOpts'), ovQuestion=$('ovQuestion'),
+      ovTimer=$('ovTimer'), timebarFill=$('timebarFill'), totalVotesEl=$('totalVotes'),
+      footRight=$('footRight'), modeBadge=$('modeBadge'), ovSub=$('ovSub'),
+      closeRace=$('closeRace'), resultBanner=$('resultBanner'), confettiBox=$('confetti'),
+      statusDot=$('statusDot'), statusText=$('statusText'),
+      startBtn=$('startBtn'), endBtn=$('endBtn'), resetBtn=$('resetBtn');
+
+  function activeOptions(){
+    return state.options.map(function(o,i){ return {o:o,i:i}; }).filter(function(x){ return x.o.label.trim() !== ''; });
+  }
+  function colors(){ return COLORS; }
+  function totalVotes(){ return state.options.reduce(function(s,o){ return s+o.votes; },0); }
+  function totalPoints(){ return state.options.reduce(function(s,o){ return s+o.points; },0); }
+  function fmt(n){ return n.toLocaleString('ja-JP'); }
+
+  function isOn(id){ return $(id).getAttribute('aria-checked')==='true'; }
+  function setOn(id, v){ $(id).setAttribute('aria-checked', v ? 'true' : 'false'); }
+  function toast(msg){
+    var t=$('toast'); t.textContent=msg; t.classList.add('show');
+    clearTimeout(t._h); t._h=setTimeout(function(){ t.classList.remove('show'); },2600);
+  }
+
+  /* ---------- editors ---------- */
+  function buildEditors(){
+    var box=$('optEdits'); box.innerHTML='';
+    state.options.forEach(function(o,i){
+      var row=document.createElement('div'); row.className='opt-edit';
+      var num=document.createElement('span'); num.className='onum'; num.textContent=(i+1);
+      var sw=document.createElement('span'); sw.className='swatch'; sw.style.background=colors()[i];
+      var inp=document.createElement('input'); inp.type='text'; inp.maxLength=24;
+      inp.placeholder='選択肢 '+(i+1)+(i>=2?'（任意・最大10）':'');
+      inp.value=o.label; inp.setAttribute('aria-label','選択肢'+(i+1));
+      inp.addEventListener('input', function(){ state.options[i].label=inp.value; render(); buildVoteBtns(); });
+      row.appendChild(num); row.appendChild(sw); row.appendChild(inp); box.appendChild(row);
+    });
+    var vb=$('voteBtns'); // keep vote button names in sync via rebuild
+    buildVoteBtns();
+  }
+  function buildVoteBtns(){
+    var box=$('voteBtns'); box.innerHTML='';
+    activeOptions().forEach(function(x){
+      var line=document.createElement('div'); line.className='vote-line';
+      var name=document.createElement('span'); name.className='vname';
+      var dot=document.createElement('i'); dot.style.background=colors()[x.i];
+      name.appendChild(dot); name.appendChild(document.createTextNode(x.o.label));
+      line.appendChild(name);
+      [1,10].forEach(function(n){
+        var b=document.createElement('button'); b.type='button'; b.textContent='+'+n;
+        b.addEventListener('click', function(){ addVote(x.i, n); });
+        line.appendChild(b);
+      });
+      box.appendChild(line);
+    });
+    if(activeOptions().length===0){
+      box.innerHTML='<p class="hint">選択肢を入力すると、ここに投票ボタンが出ます。</p>';
+    }
+  }
+
+  /* ---------- voting ---------- */
+  function addVote(idx, n){
+    if(state.status!=='live'){ toast('投票中だけ票を入れられます。「投票スタート」を押してください'); return; }
+    for(var k=0;k<n;k++){
+      state.options[idx].votes++;
+      if(state.mode==='pred'){ state.options[idx].points += [100,300,500,1000][Math.floor(Math.random()*4)]; }
+    }
+    render();
+  }
+  function burst(){
+    if(state.status!=='live'){ toast('投票中だけ票を入れられます。「投票スタート」を押してください'); return; }
+    var act=activeOptions(); if(!act.length) return;
+    for(var k=0;k<30;k++){
+      // Slight bias so the race moves around
+      var pick = act[Math.floor(Math.pow(Math.random(),0.8)*act.length)];
+      addVoteSilent(pick.i);
+    }
+    render();
+  }
+  function addVoteSilent(idx){
+    state.options[idx].votes++;
+    if(state.mode==='pred'){ state.options[idx].points += [100,300,500,1000][Math.floor(Math.random()*4)]; }
+  }
+  function autoTick(){
+    var act=activeOptions(); if(!act.length || state.status!=='live') return;
+    var n=1+Math.floor(Math.random()*3);
+    for(var k=0;k<n;k++){ addVoteSilent(act[Math.floor(Math.random()*act.length)].i); }
+    render();
+  }
+
+  /* ---------- flow ---------- */
+  function start(){
+    if(activeOptions().length<2){ toast('選択肢を2つ以上入力してください'); return; }
+    state.options.forEach(function(o){ o.votes=0; o.points=0; });
+    prevVotes = state.options.map(function(){ return 0; });
+    state.winnerIdx=-1; state.status='live';
+    state.duration=parseInt($('durSel').value,10); state.remain=state.duration;
+    confettiBox.innerHTML=''; resultBanner.className='result-banner';
+    clearInterval(state.timerId);
+    state.timerId=setInterval(function(){
+      state.remain--;
+      if(state.remain<=0){ finish(); return; }
+      render();
+    },1000);
+    if(isOn('autoVote')){ startAuto(); }
+    render(); toast('投票スタート！');
+  }
+  function finish(){
+    if(state.status!=='live') return;
+    clearInterval(state.timerId); stopAuto();
+    state.status='ended'; state.remain=0;
+    confettiBox.innerHTML='';
+    if(state.mode==='poll'){
+      // アンケートは締切と同時に最多得票が自動で勝ちになる（結果待ちは挟まない）
+      var act=activeOptions(), bestIdx=-1, bestVotes=-1;
+      act.forEach(function(x){ if(x.o.votes>bestVotes){ bestVotes=x.o.votes; bestIdx=x.i; } });
+      state.winnerIdx=bestIdx;
+      render();
+      if(bestIdx>=0){
+        launchConfetti();
+        if(isOn('soundOn')){ fanfare(); }
+        toast('締め切りました ― 最多得票の「'+state.options[bestIdx].label+'」が勝ちです');
+      } else {
+        toast('締め切りました');
+      }
+      return;
+    }
+    // 賭博は締切＝ロックのみ。勝者は決めない・演出も出さない。結果は未確定のまま「結果待ち」。
+    state.winnerIdx=-1;
+    render();
+    toast('締め切りました ― 結果はまだ未確定です。実際の結果を「結果の確定」から選んでください');
+  }
+  function confirmWinner(idx){
+    if(state.status!=='ended'){ toast('先に「締め切る」を押してから結果を確定してください'); return; }
+    state.winnerIdx=idx;
+    render();
+    launchConfetti();
+    if(isOn('soundOn')){ fanfare(); }
+    toast(state.mode==='pred'
+      ? '結果確定 ― 「'+state.options[idx].label+'」が的中です'
+      : '結果確定 ― 「'+state.options[idx].label+'」に決定');
+  }
+  function clearWinner(){
+    if(state.winnerIdx<0) return;
+    state.winnerIdx=-1;
+    confettiBox.innerHTML='';
+    render();
+    toast('結果の確定を取り消しました。選び直せます');
+  }
+  function buildWinnerBtns(){
+    var box=$('winnerBtns'); if(!box) return;
+    box.innerHTML='';
+    var act=activeOptions();
+    if(act.length===0){
+      box.innerHTML='<p class="hint">選択肢を入力すると、ここに確定ボタンが出ます。</p>';
+      return;
+    }
+    var total=totalVotes();
+    act.forEach(function(x){
+      var pct = total>0 ? Math.round(x.o.votes/total*100) : 0;
+      var b=document.createElement('button'); b.type='button'; b.className='winner-btn';
+      if(state.winnerIdx===x.i) b.classList.add('selected');
+      b.disabled = state.status!=='ended' || state.mode==='poll';
+      var dot=document.createElement('i'); dot.style.background=colors()[x.i];
+      var lab=document.createElement('span'); lab.className='wlabel'; lab.textContent=x.o.label;
+      var meta=document.createElement('span'); meta.className='wmeta';
+      meta.textContent = state.mode==='pred' ? fmt(x.o.votes)+'人 ・ '+pct+'%' : fmt(x.o.votes)+'票 ・ '+pct+'%';
+      var actLabel=document.createElement('span'); actLabel.className='waction';
+      actLabel.textContent = state.mode==='poll'
+        ? (state.winnerIdx===x.i ? '👑 勝ち' : (state.status==='ended' ? '自動で確定済み' : '締切時に自動で決まります'))
+        : (state.winnerIdx===x.i ? '🎯 的中（確定済み）' : (state.status==='ended' ? 'これが実際の結果 →' : '締切後に選べます'));
+      b.appendChild(dot); b.appendChild(lab); b.appendChild(meta); b.appendChild(actLabel);
+      b.addEventListener('click', function(){ confirmWinner(x.i); });
+      box.appendChild(b);
+    });
+  }
+  function resetAll(){
+    clearInterval(state.timerId); stopAuto();
+    state.status='idle'; state.winnerIdx=-1; state.remain=state.duration;
+    state.options.forEach(function(o){ o.votes=0; o.points=0; });
+    prevVotes = state.options.map(function(){ return 0; });
+    confettiBox.innerHTML=''; resultBanner.className='result-banner';
+    render(); toast('リセットしました');
+  }
+  function startAuto(){ stopAuto(); state.autoId=setInterval(autoTick, 900); }
+  function stopAuto(){ if(state.autoId){ clearInterval(state.autoId); state.autoId=null; } }
+
+  /* ---------- effects ---------- */
+  function launchConfetti(){
+    confettiBox.innerHTML='';
+    var cols=['#82d4ec','#4392ac','#ef476f','#ffd166','#58b83d','#5b7fe8','#163a5f','#d2e9f0'];
+    for(var i=0;i<70;i++){
+      var p=document.createElement('i');
+      p.style.left=(Math.random()*100)+'%';
+      p.style.background=cols[i%cols.length];
+      p.style.animationDuration=(1.4+Math.random()*1.6)+'s';
+      p.style.animationDelay=(Math.random()*0.7)+'s';
+      p.style.transform='rotate('+(Math.random()*360)+'deg)';
+      confettiBox.appendChild(p);
+    }
+    setTimeout(function(){ confettiBox.innerHTML=''; },4200);
+  }
+  var audioCtx=null;
+  function fanfare(){
+    try{
+      if(!audioCtx){ audioCtx=new (window.AudioContext||window.webkitAudioContext)(); }
+      if(audioCtx.state==='suspended'){ audioCtx.resume(); }
+      var notes=[523.25,659.25,783.99,1046.5];
+      notes.forEach(function(f,i){
+        var o=audioCtx.createOscillator(), g=audioCtx.createGain();
+        o.type='triangle'; o.frequency.value=f;
+        var t=audioCtx.currentTime + i*0.13;
+        g.gain.setValueAtTime(0.0001,t);
+        g.gain.exponentialRampToValueAtTime(0.22,t+0.03);
+        g.gain.exponentialRampToValueAtTime(0.0001,t+0.5);
+        o.connect(g); g.connect(audioCtx.destination);
+        o.start(t); o.stop(t+0.55);
+      });
+    }catch(e){ /* sound is optional */ }
+  }
+
+  /* ---------- render ---------- */
+  function renderTimer(){
+    var m=Math.floor(state.remain/60), s=state.remain%60;
+    ovTimer.textContent = state.status==='idle' ? '--:--' : (m+':'+('0'+s).slice(-2));
+    ovTimer.classList.toggle('urgent', state.status==='live' && state.remain<=10);
+    var pct = state.duration>0 ? Math.max(0, state.remain/state.duration*100) : 0;
+    timebarFill.style.width = (state.status==='idle' ? 100 : pct)+'%';
+  }
+  function render(){
+    ovQuestion.textContent = $('qInput').value.trim() || '（お題を入力してください）';
+    modeBadge.textContent = state.mode==='pred' ? '賭博' : 'アンケート';
+    modeBadge.classList.toggle('pred', state.mode==='pred');
+    ovSub.textContent = state.mode==='pred' ? 'チャンネルポイントを賭けて予想しよう' : 'チャットで番号を送って投票しよう';
+    var act=activeOptions(), total=totalVotes(), pts=totalPoints();
+    // leader
+    var leadIdx=-1, leadVotes=-1, secondVotes=-1;
+    act.forEach(function(x){
+      if(x.o.votes>leadVotes){ secondVotes=leadVotes; leadVotes=x.o.votes; leadIdx=x.i; }
+      else if(x.o.votes>secondVotes){ secondVotes=x.o.votes; }
+    });
+    var prevTotal = prevVotes.reduce(function(s,v){ return s+v; },0);
+    ovOpts.innerHTML='';
+    act.forEach(function(x){
+      var pct = total>0 ? Math.round(x.o.votes/total*100) : 0;
+      var div=document.createElement('div'); div.className='opt';
+      div.style.setProperty('--opt-color', colors()[x.i]);
+      var inc = x.o.votes - (prevVotes[x.i]||0);
+      var isBump = state.status==='live' && inc>0;
+      if(isBump) div.classList.add('bump');
+      if(state.status==='live' && leadIdx===x.i && total>0) div.classList.add('leading');
+      if(state.status==='ended' && state.winnerIdx===x.i) div.classList.add('winner');
+      if(state.status==='ended' && state.winnerIdx>=0 && state.winnerIdx!==x.i) div.classList.add('dim');
+      var track=document.createElement('div'); track.className='opt-track';
+      var fill=document.createElement('div'); fill.className='opt-fill';
+      var prevPct = prevTotal>0 ? Math.round((prevVotes[x.i]||0)/prevTotal*100) : 0;
+      // 前回の幅からスタートさせて、次フレームで新しい幅へ transition させる
+      fill.style.width=prevPct+'%'; fill.style.background=colors()[x.i];
+      fill.setAttribute('data-target', pct);
+      track.appendChild(fill); div.appendChild(track);
+      var row=document.createElement('div'); row.className='opt-row';
+      var num=document.createElement('span'); num.className='opt-num'; num.style.background=colors()[x.i]; num.textContent=(x.i+1);
+      var nm=document.createElement('span'); nm.className='opt-name'; nm.textContent=x.o.label;
+      var wb=document.createElement('span'); wb.className='win-badge'; wb.textContent = state.mode==='pred' ? '🎯的中' : '👑勝ち';
+      var pc=document.createElement('span'); pc.className='opt-pct'; pc.textContent=pct+'%';
+      row.appendChild(num); row.appendChild(nm); row.appendChild(wb); row.appendChild(pc);
+      div.appendChild(row);
+      var meta=document.createElement('div'); meta.className='opt-meta';
+      meta.innerHTML = state.mode==='pred'
+        ? '<span>'+fmt(x.o.votes)+' 人が予想</span><span>'+fmt(x.o.points)+' pt 賭けられてる</span>'
+        : '<span>'+fmt(x.o.votes)+' 票</span>';
+      div.appendChild(meta);
+      if(isBump){
+        var flash=document.createElement('span'); flash.className='vote-flash'; flash.textContent='+'+inc;
+        div.appendChild(flash);
+      }
+      ovOpts.appendChild(div);
+    });
+    // 次回比較用に票数を記録（バーアニメーションの判定）
+    prevVotes = state.options.map(function(o){ return o.votes; });
+    // バーを前回幅 → 今回幅へアニメーション
+    requestAnimationFrame(function(){
+      requestAnimationFrame(function(){
+        ovOpts.querySelectorAll('.opt-fill').forEach(function(f){ f.style.width=f.getAttribute('data-target')+'%'; });
+      });
+    });
+    if(act.length===0){
+      ovOpts.innerHTML='<p style="margin:4px 2px;color:rgba(22,58,95,.6);font-size:13px;">操作パネルで選択肢を入力してください</p>';
+    }
+    totalVotesEl.textContent=fmt(total);
+    // 残り30秒バナー：投票中かつ残り時間が30秒以下になったら表示（数字はタイマーと同期してカウントダウン）
+    var showClose = state.status==='live' && state.remain<=30 && state.remain>0;
+    closeRace.classList.toggle('show', showClose);
+    if(showClose){ closeRace.textContent='⌛投票時間のこり '+state.remain+'秒！'; }
+    // result banner ― 締切だけでは勝者バナーは出さない
+    if(state.status==='ended' && state.winnerIdx>=0){
+      var w=state.options[state.winnerIdx];
+      var wpct= total>0 ? Math.round(w.votes/total*100) : 0;
+      resultBanner.textContent = state.mode==='pred'
+        ? '結果確定：'+w.label+' ― '+wpct+'% の予想が的中！'
+        : '結果確定：'+w.label+'（'+wpct+'%）';
+      resultBanner.className='result-banner show';
+    } else if(state.status==='ended'){
+      resultBanner.textContent='投票締切 ― 結果はまだ未確定です';
+      resultBanner.className='result-banner show waiting';
+    } else {
+      resultBanner.className='result-banner';
+    }
+    // footer + status
+    if(state.status==='live'){ footRight.textContent = state.mode==='pred' ? '合計 '+fmt(pts)+' pt 賭けられてる' : '投票受付中…'; }
+    else if(state.status==='ended' && state.winnerIdx>=0){ footRight.textContent='結果が確定しました'; }
+    else if(state.status==='ended'){ footRight.textContent='締切済み ・ 結果待ち'; }
+    else { footRight.textContent='投票受付前'; }
+    statusDot.className='dot'+(state.status==='live'?' live':state.status==='ended'?' ended':'');
+    statusText.textContent = state.status==='live' ? '投票受付中 ― 合計 '+fmt(total)+' 票'
+      : (state.status==='ended' && state.winnerIdx>=0) ? '結果確定 ― 「'+state.options[state.winnerIdx].label+'」'
+      : state.status==='ended' ? '締切済み ― 結果は未確定（勝者は未選択）' : '待機中 ― まだ投票は始まっていません';
+    // 結果確定エリアの状態
+    buildWinnerBtns();
+    var wArea=$('winnerArea'), wState=$('winnerState'), clearBtn=$('clearWinnerBtn');
+    if(wArea && wState){
+      wArea.classList.toggle('is-ready', state.status==='ended' && state.winnerIdx<0);
+      wArea.classList.toggle('is-confirmed', state.status==='ended' && state.winnerIdx>=0);
+      if(state.status==='ended' && state.winnerIdx>=0){ wState.textContent='確定済み：'+state.options[state.winnerIdx].label; wState.className='winner-state confirmed'; }
+      else if(state.status==='ended'){ wState.textContent='締切済み ・ 未確定'; wState.className='winner-state ready'; }
+      else if(state.status==='live'){ wState.textContent='投票中（締切後に確定できます）'; wState.className='winner-state'; }
+      else { wState.textContent='未確定'; wState.className='winner-state'; }
+      if(clearBtn){ clearBtn.style.display = (state.status==='ended' && state.winnerIdx>=0 && state.mode==='pred') ? '' : 'none'; }
+      var wTitle=$('winnerHeadTitle');
+      if(wTitle){ wTitle.textContent = state.mode==='poll' ? '結果の確定 ― アンケートは自動' : '結果の確定 ― 締切とは別の操作'; }
+      var wHint=$('winnerHint');
+      if(wHint){
+        wHint.textContent = state.mode==='poll'
+          ? 'アンケートは締切と同時に最多得票の選択肢が自動で勝ちになるので、ここで選ぶ必要はありません。'
+          : '締切後に、実際の結果になった選択肢をここで選んでください。時間をおいてから選んでも大丈夫です。選んだときだけ、勝ちバッジ・結果バナー・紙吹雪が出ます。票数が一番多い選択肢が自動で勝ちになることはありません。';
+      }
+    }
+    startBtn.disabled = state.status==='live';
+    endBtn.disabled = state.status!=='live';
+    renderTimer();
+    // パネルの実寸を表示（選択肢10個でも1080px以内か確認できるように）
+    var si=$('sizeInfo');
+    if(si){
+      var h=overlay.offsetHeight;
+      si.innerHTML='幅 380px ・ 高さ '+h+'px ／ <b>1080px以内 ✓</b>';
+    }
+  }
+
+  /* ---------- wiring ---------- */
+  $('qInput').addEventListener('input', render);
+  $('durSel').addEventListener('change', function(){ if(state.status==='idle'){ state.duration=parseInt(this.value,10); state.remain=state.duration; renderTimer(); } });
+  startBtn.addEventListener('click', start);
+  endBtn.addEventListener('click', finish);
+  resetBtn.addEventListener('click', resetAll);
+  var _cwb=$('clearWinnerBtn'); if(_cwb){ _cwb.addEventListener('click', clearWinner); }
+  $('burstBtn').addEventListener('click', burst);
+  $('autoVote').addEventListener('click', function(){ var on=!isOn('autoVote'); setOn('autoVote', on); if(on && state.status==='live'){ startAuto(); toast('自動投票オン'); } else { stopAuto(); } });
+  $('soundOn').addEventListener('click', function(){ setOn('soundOn', !isOn('soundOn')); });
+  function setMode(m){
+    state.mode=m;
+    $('modePoll').classList.toggle('on', m==='poll');
+    $('modePred').classList.toggle('on', m==='pred');
+    buildEditors(); render();
+  }
+  $('modePoll').addEventListener('click', function(){ setMode('poll'); });
+  $('modePred').addEventListener('click', function(){ setMode('pred'); });
+  var PRESETS={
+    bg:{ q:'今日の背景、どっちの色にする？', opts:['夕焼けオレンジ','夜空ネイビー','森のグリーン','桜ピンク'], mode:'poll' },
+    finish:{ q:'今日中に塗り終わる？', opts:['終わる','終わらない'], mode:'pred' },
+    next:{ q:'次に描くのはどっち？', opts:['新衣装のファンアート','オリジナルキャラ'], mode:'poll' },
+    game:{ q:'次の行動はどうする？', opts:['正面から突っ込む','裏を取る','様子見する','アイテムを使う'], mode:'poll' },
+    many:{ q:'今日のおやつはどれにする？', opts:['クッキー','ケーキ','プリン','アイス','ドーナツ','マカロン','チョコ','ゼリー','せんべい','グミ'], mode:'poll' }
+  };
+  $('presetSel').addEventListener('change', function(){
+    var p=PRESETS[this.value]; if(!p) return;
+    $('qInput').value=p.q;
+    state.options.forEach(function(o,i){ o.label = p.opts[i] || ''; o.votes=0; o.points=0; });
+    prevVotes = state.options.map(function(){ return 0; });
+    setMode(p.mode); buildEditors(); resetAll();
+    toast('プリセットを入れました。「投票スタート」で開始できます');
+    this.value='';
+  });
+
+  /* ---------- Twitch連携 & 配信用モード ---------- */
+  function baseUrl(){ return location.origin + location.pathname; }
+  function streamSuffix(){
+    var cid = ($('twitchClientId') && $('twitchClientId').value.trim()) || twitch.clientId;
+    return '?stream=1' + (cid ? '&client_id=' + encodeURIComponent(cid) : '');
+  }
+  function refreshStreamUrl(){ var el=$('streamUrlText'); if(el) el.textContent='このページの公開URL + ' + streamSuffix(); }
+  function setTwitchUI(title, detail, live){
+    var t=$('twitchStatusTitle'), d=$('twitchStatusDetail'), dot=$('twitchDot');
+    if(t) t.textContent=title; if(d) d.textContent=detail;
+    if(dot) dot.className='dot'+(live?' live':'');
+    var disc=$('twitchDisconnectBtn'); if(disc) disc.style.display = twitch.accessToken ? '' : 'none';
+    var conn=$('twitchConnectBtn'); if(conn) conn.textContent = twitch.connected ? '接続中（再接続）' : (twitch.accessToken ? 'EventSubに接続する' : 'Twitchと連携する');
+    // 配信用モードでは、未接続の間だけ小さな連携バーを出す（接続したら消える）
+    var sc=$('streamConnect'); if(sc) sc.classList.toggle('show', IS_STREAM && !twitch.connected);
+    refreshStreamUrl();
+  }
+  function parseHashToken(){
+    if(!location.hash || location.hash.length<2) return;
+    var hp = new URLSearchParams(location.hash.slice(1));
+    var tok = hp.get('access_token'); if(!tok) return;
+    twitch.accessToken = tok;
+    // state = "<clientId>" または "<clientId>|stream"（配信用モードから許可した場合は stream を復元する）
+    var st = hp.get('state');
+    if(st){
+      var parts = decodeURIComponent(st).split('|');
+      if(parts[0] && !twitch.clientId) twitch.clientId = parts[0];
+      if(parts[1]==='stream' && !IS_STREAM){ IS_STREAM=true; document.body.classList.add('stream-mode'); }
+    }
+    // トークンをURLに残さない（履歴から消す。メモリ内でのみ保持）
+    try{ history.replaceState(null,'', location.pathname + location.search); }catch(e){}
+  }
+  function startOAuth(fromStream){
+    var mainInp=$('twitchClientId'), streamInp=$('streamClientId');
+    var cid = (fromStream && streamInp && streamInp.value.trim()) || (mainInp ? mainInp.value.trim() : '') || (streamInp ? streamInp.value.trim() : '');
+    if(!cid){ toast('先に Client ID を入力してください（dev.twitch.tv で取得）'); (fromStream && streamInp ? streamInp : mainInp).focus(); return; }
+    if(mainInp) mainInp.value=cid;
+    if(streamInp) streamInp.value=cid;
+    if(twitch.accessToken){ twitch.clientId=cid; connectTwitch(); return; }
+    twitch.clientId=cid;
+    var scopes='channel:read:polls channel:read:predictions';
+    var stateVal = cid + ((fromStream || IS_STREAM) ? '|stream' : '');
+    var url='https://id.twitch.tv/oauth2/authorize?client_id='+encodeURIComponent(cid)+'&redirect_uri='+encodeURIComponent(baseUrl())+'&response_type=token&scope='+encodeURIComponent(scopes)+'&state='+encodeURIComponent(stateVal)+'&force_verify=false';
+    location.href=url;
+  }
+  function disconnectTwitch(){
+    if(twitch.ws){ try{ twitch.ws.close(); }catch(e){} twitch.ws=null; }
+    if(twitch.keepaliveTimer){ clearTimeout(twitch.keepaliveTimer); twitch.keepaliveTimer=null; }
+    if(twitch.reconnectTimer){ clearTimeout(twitch.reconnectTimer); twitch.reconnectTimer=null; }
+    twitch.accessToken=''; twitch.connected=false; twitch.sessionId='';
+    setTwitchUI('未連携','連携を切りました。再度使うときは「Twitchと連携する」を押してください。', false);
+    toast('Twitch連携を切りました');
+  }
+  function twitchFetch(path){
+    return fetch('https://api.twitch.tv/helix'+path, { headers:{ 'Authorization':'Bearer '+twitch.accessToken, 'Client-Id': twitch.clientId } });
+  }
+  function connectTwitch(){
+    if(!twitch.clientId || !twitch.accessToken){ toast('Client IDと許可が必要です'); return; }
+    setTwitchUI('接続中…','Twitchのアカウント情報を確認しています。', false);
+    twitchFetch('/users').then(function(r){ if(!r.ok) throw new Error('users '+r.status); return r.json(); }).then(function(j){
+      var u=j.data && j.data[0]; if(!u) throw new Error('no user');
+      twitch.userId=u.id; twitch.userLogin=u.login; twitch.displayName=u.display_name;
+      setTwitchUI('許可済み：'+(u.display_name||u.login), 'EventSubに接続しています…このあとTwitchで開始した投票が自動反映されます。', false);
+      connectEventSub();
+      fetchActivePollPrediction();
+    }).catch(function(e){ setTwitchUI('接続できませんでした','トークンの期限切れの可能性があります。「Twitchと連携する」から許可し直してください。', false); });
+  }
+  function fetchActivePollPrediction(){
+    // 接続時点で進行中の投票があれば取り込む
+    twitchFetch('/polls?broadcaster_id='+encodeURIComponent(twitch.userId)+'&first=1').then(function(r){ return r.ok?r.json():null; }).then(function(j){
+      if(j && j.data && j.data[0] && j.data[0].status==='ACTIVE'){ applyPollEvent('begin', j.data[0], true); }
+    }).catch(function(){});
+    twitchFetch('/predictions?broadcaster_id='+encodeURIComponent(twitch.userId)+'&first=1').then(function(r){ return r.ok?r.json():null; }).then(function(j){
+      if(j && j.data && j.data[0] && (j.data[0].status==='ACTIVE'||j.data[0].status==='LOCKED')){ applyPredictionEvent('begin', j.data[0], true); }
+    }).catch(function(){});
+  }
+  function connectEventSub(){
+    if(twitch.ws){ try{ twitch.ws.close(); }catch(e){} }
+    if(twitch.keepaliveTimer){ clearTimeout(twitch.keepaliveTimer); twitch.keepaliveTimer=null; }
+    var ws=new WebSocket('wss://eventsub.wss.twitch.tv/ws'); twitch.ws=ws;
+    var keepaliveSec=10;
+    function armWatchdog(){
+      if(twitch.keepaliveTimer) clearTimeout(twitch.keepaliveTimer);
+      // keepaliveが来ないまま制限時間を過ぎたら切断扱いにして張り直す
+      twitch.keepaliveTimer=setTimeout(function(){ try{ ws.close(); }catch(e){} if(twitch.accessToken){ connectEventSub(); } }, (keepaliveSec+5)*1000);
+    }
+    ws.onmessage=function(ev){
+      var msg; try{ msg=JSON.parse(ev.data); }catch(e){ return; }
+      armWatchdog();
+      var type=msg.metadata && msg.metadata.message_type;
+      if(type==='session_welcome'){
+        if(msg.payload.session.keepalive_timeout_seconds) keepaliveSec=msg.payload.session.keepalive_timeout_seconds;
+        armWatchdog();
+        twitch.sessionId=msg.payload.session.id; twitch.connected=true;
+        setTwitchUI('連携中：'+(twitch.displayName||twitch.userLogin), 'EventSub接続済み。Twitchでアンケート／賭博を開始すると自動で反映されます。', true);
+        toast('Twitchと連携しました');
+        subscribeAll();
+      } else if(type==='session_keepalive'){ /* keepalive */ }
+      else if(type==='notification'){
+        var sub=msg.metadata.subscription_type; var e=msg.payload.event||{};
+        if(sub.indexOf('channel.poll.')===0) applyPollEvent(sub.split('.').pop(), e, false);
+        if(sub.indexOf('channel.prediction.')===0) applyPredictionEvent(sub.split('.').pop(), e, false);
+      } else if(type==='session_reconnect'){
+        var url=msg.payload.session.reconnect_url; if(url){ var nws=new WebSocket(url); nws.onmessage=ws.onmessage; twitch.ws=nws; }
+      }
+    };
+    ws.onclose=function(){ twitch.connected=false; if(twitch.keepaliveTimer){ clearTimeout(twitch.keepaliveTimer); twitch.keepaliveTimer=null; } if(twitch.accessToken){ setTwitchUI('切断されました','自動で再接続を試みます。直らない場合は連携し直してください。', false); if(twitch.reconnectTimer) clearTimeout(twitch.reconnectTimer); twitch.reconnectTimer=setTimeout(function(){ if(twitch.accessToken && !twitch.connected) connectEventSub(); }, 3000); } };
+    ws.onerror=function(){ /* oncloseで扱う */ };
+  }
+  function subscribeAll(){
+    var types=['channel.poll.begin','channel.poll.progress','channel.poll.end','channel.prediction.begin','channel.prediction.progress','channel.prediction.lock','channel.prediction.end'];
+    types.forEach(function(t){
+      fetch('https://api.twitch.tv/helix/eventsub/subscriptions', { method:'POST', headers:{ 'Authorization':'Bearer '+twitch.accessToken, 'Client-Id':twitch.clientId, 'Content-Type':'application/json' }, body: JSON.stringify({ type:t, version:'1', condition:{ broadcaster_user_id: twitch.userId }, transport:{ method:'websocket', session_id: twitch.sessionId } }) }).catch(function(){});
+    });
+  }
+  function setFromTwitch(mode, title, labels){
+    state.mode=mode; $('modePoll').classList.toggle('on', mode==='poll'); $('modePred').classList.toggle('on', mode==='pred');
+    $('qInput').value=title||'';
+    state.options.forEach(function(o,i){ o.label=labels[i]||''; o.votes=0; o.points=0; });
+    prevVotes=state.options.map(function(){return 0;}); buildEditors();
+  }
+  function startTwitchTimer(endsAt){
+    clearInterval(state.timerId);
+    function tick(){
+      var remain=Math.max(0, Math.round((new Date(endsAt).getTime()-Date.now())/1000));
+      state.remain=remain; if(remain<=0){ clearInterval(state.timerId); } render();
+    }
+    if(endsAt){ state.duration=Math.max(1, state.remain||60); state.timerId=setInterval(tick,1000); tick(); }
+  }
+  function applyPollEvent(kind, e, fromApi){
+    var choices = e.choices || e.outcomes || []; if(!choices.length) return;
+    if(kind==='begin'){
+      setFromTwitch('poll', e.title, choices.map(function(c){return c.title;}));
+      state._twitchIds=choices.map(function(c){return c.id;}); state.status='live'; state.winnerIdx=-1;
+      var ends=e.ends_at||e.ended_at; if(ends){ state.remain=Math.max(0,Math.round((new Date(ends).getTime()-Date.now())/1000)); state.duration=state.remain||60; startTwitchTimer(ends); }
+      render(); toast('Twitchのアンケートを開始しました');
+    }
+    choices.forEach(function(c,idx){
+      var realIdx = state._twitchIds ? state._twitchIds.indexOf(c.id) : idx; if(realIdx<0) realIdx=idx;
+      if(state.options[realIdx]) state.options[realIdx].votes = (c.votes!=null?c.votes:((c.bits_votes||0)+(c.channel_points_votes||0)+(c.base_votes||0)));
+    });
+    if(kind==='end'){
+      clearInterval(state.timerId); state.status='ended'; state.remain=0;
+      var best=-1,bv=-1; state.options.forEach(function(o,i){ if(o.label && o.votes>bv){bv=o.votes;best=i;} }); state.winnerIdx=best; render();
+      if(best>=0){ launchConfetti(); if(isOn('soundOn')) fanfare(); }
+      return;
+    }
+    render();
+  }
+  function applyPredictionEvent(kind, e, fromApi){
+    var outs=e.outcomes||[]; if(!outs.length) return;
+    if(kind==='begin'){
+      setFromTwitch('pred', e.title, outs.map(function(o){return o.title;}));
+      state._twitchIds=outs.map(function(o){return o.id;}); state.status='live'; state.winnerIdx=-1;
+      var ends=e.locks_at||e.ends_at; if(ends){ state.remain=Math.max(0,Math.round((new Date(ends).getTime()-Date.now())/1000)); state.duration=state.remain||60; startTwitchTimer(ends); }
+      render(); toast('Twitchの賭博を開始しました');
+    }
+    outs.forEach(function(o,idx){
+      var realIdx=state._twitchIds?state._twitchIds.indexOf(o.id):idx; if(realIdx<0) realIdx=idx;
+      if(state.options[realIdx]){ state.options[realIdx].votes=o.users||0; state.options[realIdx].points=o.channel_points||0; }
+    });
+    if(kind==='lock'){ clearInterval(state.timerId); state.status='ended'; state.winnerIdx=-1; state.remain=0; render(); toast('賭博が締め切られました ― 結果待ちです'); return; }
+    if(kind==='end'){
+      clearInterval(state.timerId); state.status='ended'; state.remain=0;
+      var wid=e.winning_outcome_id; var wi=wid && state._twitchIds ? state._twitchIds.indexOf(wid) : -1; state.winnerIdx=wi; render();
+      if(wi>=0){ launchConfetti(); if(isOn('soundOn')) fanfare(); } return;
+    }
+    render();
+  }
+  // 配信用・連携の配線
+  parseHashToken();
+  if(twitch.clientId && $('twitchClientId')) $('twitchClientId').value=twitch.clientId;
+  if(_qs.get('client_id') && $('twitchClientId')) $('twitchClientId').value=_qs.get('client_id');
+  refreshStreamUrl();
+  var _cb=$('twitchConnectBtn'); if(_cb) _cb.addEventListener('click', function(){ startOAuth(false); });
+  var _scb=$('streamConnectBtn'); if(_scb) _scb.addEventListener('click', function(){ startOAuth(true); });
+  var _sci=$('streamClientId'); if(_sci && twitch.clientId) _sci.value=twitch.clientId;
+  if(IS_STREAM) setTwitchUI(twitch.accessToken ? '許可済み' : '未連携', IS_STREAM ? '' : '', false);
+  var _db=$('twitchDisconnectBtn'); if(_db) _db.addEventListener('click', disconnectTwitch);
+  var _ci=$('twitchClientId'); if(_ci) _ci.addEventListener('input', refreshStreamUrl);
+  var _os=$('openStreamBtn'); if(_os) _os.addEventListener('click', function(){ window.open(streamSuffix(),'_blank'); });
+  var _pt=$('streamPreviewTgl'); if(_pt) _pt.addEventListener('click', function(){ var on=!isOn('streamPreviewTgl'); setOn('streamPreviewTgl', on); document.body.classList.toggle('stream-mode', on); toast(on?'配信用プレビュー中（パネルだけ表示）':'通常表示に戻しました'); });
+  if(twitch.accessToken && twitch.clientId){ connectTwitch(); }
+  else if(twitch.accessToken){ setTwitchUI('許可済み（Client ID待ち）','トークンは取得できました。Client IDを入力して「EventSubに接続する」を押してください。', false); }
+  if(IS_STREAM && twitch.accessToken && twitch.clientId){ /* stream側でも自動接続（connectTwitchが上で走る） */ }
+
+  buildEditors();
+  render();
+  refreshStreamUrl();
+})();
+</script>
+</body>
+</html>
